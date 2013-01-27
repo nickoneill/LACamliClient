@@ -10,7 +10,16 @@
 #import <AssetsLibrary/AssetsLibrary.h>
 #import <CommonCrypto/CommonDigest.h>
 
-static NSString* const CamliRootKey = @"camliBlobRoot";
+@interface LACamliClient ()
+
+@property NSString *blobRoot;
+@property NSString *uploadUrl;
+
+@property NSMutableArray *chunks;
+
+@property BOOL isAuthorized;
+
+@end
 
 @implementation LACamliClient
 
@@ -18,16 +27,10 @@ static NSString* const CamliRootKey = @"camliBlobRoot";
 {    
     if (self = [super initWithBaseURL:url]) {
         self.chunks = [NSMutableArray array];
+        self.isAuthorized = false;
         
         [self registerHTTPOperationClass:[AFJSONRequestOperation class]];
         [self setDefaultHeader:@"Accept" value:@"application/json"];
-        
-        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-        if (![defaults stringForKey:CamliRootKey]) {
-            [self discovery];
-        } else {
-            self.blobRoot = [defaults stringForKey:CamliRootKey];
-        }
     }
     
     return self;
@@ -35,10 +38,10 @@ static NSString* const CamliRootKey = @"camliBlobRoot";
 
 // if we don't have blobroot with which to make these requests, we need to find it first
 // 
-- (void)discovery
+- (void)discoveryWithUsername:(NSString *)user andPassword:(NSString *)pass
 {
     // authorization required if this isn't connecting to localhost
-//    [self setAuthorizationHeaderWithUsername:@"nickoneill" password:@"password"];
+    [self setAuthorizationHeaderWithUsername:user password:pass];
     
     [self setDefaultHeader:@"Accept" value:@"text/x-camli-configuration"];
     
@@ -48,15 +51,13 @@ static NSString* const CamliRootKey = @"camliBlobRoot";
             NSDictionary *json = [NSJSONSerialization JSONObjectWithData:responseObject options:NSJSONReadingAllowFragments error:&error];
 
             self.blobRoot = [json valueForKeyPath:@"blobRoot"];
-            
-            NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-            [defaults setObject:self.blobRoot forKey:@"camliBlobRoot"];
-            [defaults synchronize];
+            self.isAuthorized = YES;
+            NSLog(@"discovery worked");
         } else {
             NSLog(@"returned object was not NSData!");
         }
     } failure:^(AFHTTPRequestOperation *operation, NSError *error) {
-        NSLog(@"root fail: %@",[error localizedDescription]);
+        NSLog(@"root fail: %@",error);
     }];
 }
 
@@ -64,6 +65,11 @@ static NSString* const CamliRootKey = @"camliBlobRoot";
 // 
 - (void)uploadAssets:(NSArray *)assets
 {
+    if (![self isAuthorized]) {
+        NSLog(@"No authorization stored, you may have forgotten discovery");
+        return;
+    }
+    
     // async, so lets protect ourselves against the user messing with this array later
     for (ALAsset *asset in assets) {
         LACamliChunk *chunk = [[LACamliChunk alloc] initWithAsset:asset];
@@ -97,20 +103,28 @@ static NSString* const CamliRootKey = @"camliBlobRoot";
         // TODO: (though we have to keep track of them as parts of a greater file when small chunking)
         NSMutableArray *chunksToRemove = [NSMutableArray array];
         
+        NSMutableDictionary *resObj; // removing afnetworking will fix this
         if ([responseObject isKindOfClass:[NSDictionary class]]) {
-            for (NSDictionary *stat in [responseObject objectForKey:@"stat"]) {
-                for (LACamliChunk *chunk in self.chunks) {
-                    if ([[stat objectForKey:@"blobRef"] isEqualToString:chunk.blobRef]) {
-                        [chunksToRemove addObject:chunk];
-                    }
-                }
-            }
-            
-            // upload urls are full urls, we just need a path
-            self.uploadUrl = [[NSURL URLWithString:[responseObject objectForKey:@"uploadUrl"]] path];
+            resObj = responseObject;
+        } else {
+            NSError *err;
+            resObj = [NSJSONSerialization JSONObjectWithData:responseObject options:0 error:&err];
         }
         
+        for (NSDictionary *stat in [resObj objectForKey:@"stat"]) {
+            for (LACamliChunk *chunk in self.chunks) {
+                if ([[stat objectForKey:@"blobRef"] isEqualToString:chunk.blobRef]) {
+                    [chunksToRemove addObject:chunk];
+                }
+            }
+        }
+        
+        // upload urls are full urls, we just need a path
+        self.uploadUrl = [[NSURL URLWithString:[resObj objectForKey:@"uploadUrl"]] path];
+
+        
         [self.chunks removeObjectsInArray:chunksToRemove];
+        NSLog(@"stat end");
         
         [self uploadChunks];
     } failure:^(AFHTTPRequestOperation *operation, NSError *error) {

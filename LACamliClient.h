@@ -12,12 +12,11 @@
 
 @interface LACamliClient : AFHTTPClient
 
-@property NSString *blobRoot;
-@property NSString *uploadUrl;
+@property (readonly) BOOL isAuthorized;
 
-@property NSMutableArray *chunks;
-
+- (void)discoveryWithUsername:(NSString *)user andPassword:(NSString *)pass;
 - (void)uploadAssets:(NSArray *)assets;
+
 + (NSString *)blobRef:(NSData *)fileData;
 
 @end
