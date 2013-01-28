@@ -21,6 +21,8 @@
 
 @end
 
+static NSString* const CamliServiceName = @"camliupload";
+
 @implementation LACamliClient
 
 - (id)initWithBaseURL:(NSURL *)url
@@ -53,6 +55,9 @@
             self.blobRoot = [json valueForKeyPath:@"blobRoot"];
             self.isAuthorized = YES;
             NSLog(@"discovery worked");
+            
+            // switch the default header so afnetworking automatically parses json, will be fixed when we no longer use afnetworking
+            [self setDefaultHeader:@"Accept" value:@"application/json"];
         } else {
             NSLog(@"returned object was not NSData!");
         }
@@ -88,7 +93,7 @@
 // request stats for each chunk, making sure the server doesn't already have the chunk
 //
 - (void)statChunks
-{
+{    
     NSMutableDictionary *params = [NSMutableDictionary dictionary];
     [params setObject:@"1" forKey:@"camliversion"];
     
@@ -187,6 +192,8 @@
     
     [schemaOp start];
 }
+
+#pragma mark - general utilities
 
 + (NSString *)blobRef:(NSData *)fileData
 {
